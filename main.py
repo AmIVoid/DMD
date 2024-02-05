@@ -18,16 +18,25 @@ server_url = "http://YOUR.DOMAIN/" # Your domain where files will be served
 supported_formats = ['mp4', 'mp3', 'gif', 'png', 'jpg']
 
 # Function to save the original file from Discord and convert it
-async def convert_media(file, target_format):
+async def convert_media(file, target_format, upscale_factor=1):
     original_file_path = os.path.join(download_path, file.filename)
     await file.save(original_file_path)
     
-    output_file_name = f"{os.path.splitext(file.filename)[0]}.{target_format}"
+    # Calculate new dimensions based on upscale factor
+    if upscale_factor != 1:  # Only apply scaling if factor is not 1
+        scale = f"scale=iw*{upscale_factor}:-1"
+    else:
+        scale = None
+
+    output_file_name = f"{os.path.splitext(file.filename)[0]}_{upscale_factor}x.{target_format}"
     output_file_path = os.path.join(download_path, output_file_name)
     
-    ffmpeg.input(original_file_path).output(output_file_path).run(overwrite_output=True)
+    if scale:
+        ffmpeg.input(original_file_path).output(output_file_path, vf=scale).run(overwrite_output=True)
+    else:
+        ffmpeg.input(original_file_path).output(output_file_path).run(overwrite_output=True)
     
-    os.remove(original_file_path)  # Remove original file if only the converted file is needed
+    os.remove(original_file_path)  # Remove original file if only the converted (and upscaled) file is needed
     
     download_link = generate_download_link(output_file_path)
     return download_link
@@ -68,18 +77,23 @@ async def delete_file_after_delay(unique_id, delay):
     app_commands.Choice(name='png', value='png'),
     app_commands.Choice(name='jpg', value='jpg')
 ])
-@app_commands.describe(target_format='The format you want to convert to')
-async def convert(interaction: discord.Interaction, target_format: app_commands.Choice[str], attachment: discord.Attachment):
+@app_commands.describe(target_format='The format you want to convert to', upscale='The upscale factor (e.g., 2 for 2x, 1.5 for 1.5x)')
+async def convert(interaction: discord.Interaction, target_format: app_commands.Choice[str], attachment: discord.Attachment, upscale: float = 1.0):
     if target_format.value not in supported_formats:
         await interaction.response.send_message(f"The format `{target_format.value}` is not supported.", ephemeral=True)
         return
 
-    download_link = await convert_media(attachment, target_format.value)
+    if upscale < 1:
+        await interaction.response.send_message("Upscale factor must be at least 1.", ephemeral=True)
+        return
+
+    download_link = await convert_media(attachment, target_format.value, upscale)
 
     unique_id = download_link.split("/")[-1]
     asyncio.create_task(delete_file_after_delay(unique_id, 600))  # Delete the file after 10 minutes
 
-    await interaction.response.send_message(f"File converted to {target_format.value}. Download link: {download_link}", ephemeral=True)
+    await interaction.response.send_message(f"File converted to {target_format.value} and upscaled by {upscale}x. Download link: {download_link}", ephemeral=True)
+
 
 # Bot event on ready
 @bot.event
