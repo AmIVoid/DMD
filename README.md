@@ -5,6 +5,7 @@ Discord Media Dingle-Berry (IDK what the last D actually stands for, just sounde
 ## Functionality
 
 `/convert` - Converts (almost) any media to the supported formats (mp4, mp3, gif, png, jpg).
+`upscale` - Optional parameter to upscale the attachment.
 
 ## Setup
 
