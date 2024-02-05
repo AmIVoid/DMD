@@ -54,6 +54,11 @@ def add_file_to_flask_app(unique_id, file_path):
     response = requests.post(flask_url, json=data)
     return response.status_code == 200
 
+async def delete_file_after_delay(unique_id, delay):
+    await asyncio.sleep(delay)
+    flask_url = f"http://localhost:5000/delete_file/{unique_id}"
+    response = requests.post(flask_url)
+
 # Slash command for converting media files
 @bot.tree.command(name='convert', description='Convert media files to a different format')
 @app_commands.choices(target_format=[
@@ -70,6 +75,9 @@ async def convert(interaction: discord.Interaction, target_format: app_commands.
         return
 
     download_link = await convert_media(attachment, target_format.value)
+
+    unique_id = download_link.split("/")[-1]
+    asyncio.create_task(delete_file_after_delay(unique_id, 600))  # Delete the file after 10 minutes
 
     await interaction.response.send_message(f"File converted to {target_format.value}. Download link: {download_link}", ephemeral=True)
 
