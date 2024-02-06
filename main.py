@@ -1,8 +1,10 @@
 import discord
-import ffmpeg
 import os
 import requests
 import asyncio
+import subprocess
+import tempfile
+import shutil
 from discord.ext import commands
 from discord import app_commands
 
@@ -22,23 +24,35 @@ async def convert_media(file, target_format, upscale_factor=1):
     original_file_path = os.path.join(download_path, file.filename)
     await file.save(original_file_path)
     
-    # Calculate new dimensions based on upscale factor
-    if upscale_factor != 1:  # Only apply scaling if factor is not 1
-        scale = f"scale=iw*{upscale_factor}:-1"
-    else:
-        scale = None
+    # Generate a temporary output file path
+    temp_dir = tempfile.mkdtemp()
+    output_file_name = f"{os.path.splitext(file.filename)[0]}"
+    if upscale_factor != 1:
+        output_file_name += f"_{upscale_factor}x"
+    output_file_name += f".{target_format}"
+    temp_output_file_path = os.path.join(temp_dir, output_file_name)
 
-    output_file_name = f"{os.path.splitext(file.filename)[0]}_{upscale_factor}x.{target_format}"
-    output_file_path = os.path.join(download_path, output_file_name)
+    try:
+        if upscale_factor != 1:
+            scale = f"scale=iw*{upscale_factor}:-1"
+            cmd = ['ffmpeg', '-y', '-i', original_file_path, '-vf', scale, temp_output_file_path]
+        else:
+            cmd = ['ffmpeg', '-y', '-i', original_file_path, temp_output_file_path]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if result.returncode != 0:
+            print(f"Error: {result.stderr}")
+            shutil.rmtree(temp_dir)  # Clean up the temporary directory
+            return "Failed to convert file due to ffmpeg error."
+    except Exception as e:
+        print(f"Exception occurred: {e}")
+        shutil.rmtree(temp_dir)  # Clean up the temporary directory
+        return "Failed to convert file due to an unexpected error."
+
+    # Replace the original file with the converted file
+    shutil.move(temp_output_file_path, original_file_path)
+    shutil.rmtree(temp_dir)  # Clean up the temporary directory
     
-    if scale:
-        ffmpeg.input(original_file_path).output(output_file_path, vf=scale).run(overwrite_output=True)
-    else:
-        ffmpeg.input(original_file_path).output(output_file_path).run(overwrite_output=True)
-    
-    os.remove(original_file_path)  # Remove original file if only the converted (and upscaled) file is needed
-    
-    download_link = generate_download_link(output_file_path)
+    download_link = generate_download_link(original_file_path)
     return download_link
 
 # Function to generate a unique download link for the converted file
@@ -77,23 +91,31 @@ async def delete_file_after_delay(unique_id, delay):
     app_commands.Choice(name='png', value='png'),
     app_commands.Choice(name='jpg', value='jpg')
 ])
-@app_commands.describe(target_format='The format you want to convert to', upscale='The upscale factor (e.g., 2 for 2x, 1.5 for 1.5x)')
+@app_commands.describe(target_format='The format you want to convert to', upscale='The upscale factor (e.g., 2 for 2x, 1 for no upscale)')
 async def convert(interaction: discord.Interaction, target_format: app_commands.Choice[str], attachment: discord.Attachment, upscale: float = 1.0):
-    if target_format.value not in supported_formats:
-        await interaction.response.send_message(f"The format `{target_format.value}` is not supported.", ephemeral=True)
-        return
+    is_upscaling_allowed = target_format.value in ['png', 'jpg']
 
-    if upscale < 1:
-        await interaction.response.send_message("Upscale factor must be at least 1.", ephemeral=True)
-        return
+    # Always defer the response first
+    await interaction.response.defer(ephemeral=True)
 
-    download_link = await convert_media(attachment, target_format.value, upscale)
+    initial_message = ""
+    if upscale > 1 and not is_upscaling_allowed:
+        # Prepare an initial note about upscaling limitations
+        initial_message = "Note: Upscale is only available for PNG and JPG formats."
 
-    unique_id = download_link.split("/")[-1]
-    asyncio.create_task(delete_file_after_delay(unique_id, 600))  # Delete the file after 10 minutes
+    await interaction.edit_original_response(content=initial_message)
 
-    await interaction.response.send_message(f"File converted to {target_format.value} and upscaled by {upscale}x. Download link: {download_link}", ephemeral=True)
+    # Proceed with conversion (and upscaling if applicable)
+    download_link = await convert_media(attachment, target_format.value, upscale if is_upscaling_allowed else 1)
 
+    # Construct the conversion completion message
+    message = f"File converted to {target_format.value}."
+    if upscale > 1 and is_upscaling_allowed:
+        message += f" Upscaled by {upscale}x."
+    message += f" Download link: {download_link}"
+
+    # Edit the deferred response with the complete message
+    await interaction.edit_original_response(content=message)
 
 # Bot event on ready
 @bot.event
