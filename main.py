@@ -114,6 +114,10 @@ async def convert(interaction: discord.Interaction, target_format: app_commands.
         message += f" Upscaled by {upscale}x."
     message += f" Download link: {download_link}"
 
+    # Delete file after 10 minutes
+    unique_id = download_link.split("/")[-1]
+    asyncio.create_task(delete_file_after_delay(unique_id, 600))
+
     # Edit the deferred response with the complete message
     await interaction.edit_original_response(content=message)
 
